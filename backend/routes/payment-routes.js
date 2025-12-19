@@ -8,7 +8,12 @@ import paymentService, { SUBSCRIPTION_PLANS } from '../services/payment-service.
 import { authenticateToken } from '../middleware/auth-middleware.js';
 
 const router = express.Router();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Initialize Stripe only if API key is provided
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+}
 
 /**
  * Get available subscription plans
@@ -54,6 +59,10 @@ router.post('/create-checkout', authenticateToken, async (req, res) => {
  * Stripe webhook handler
  */
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+    if (!stripe) {
+        return res.status(503).json({ error: 'Payment service not available' });
+    }
+
     const sig = req.headers['stripe-signature'];
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 

@@ -6,7 +6,14 @@
 import Stripe from 'stripe';
 import admin from 'firebase-admin';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+// Initialize Stripe only if API key is provided
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    console.log('✅ Stripe initialized');
+} else {
+    console.log('⚠️  Stripe API key not found - payment features disabled (demo mode)');
+}
 
 // Subscription Plans
 export const SUBSCRIPTION_PLANS = {
@@ -96,6 +103,9 @@ class PaymentService {
      * Create checkout session for subscription
      */
     async createCheckoutSession(userId, planId, successUrl, cancelUrl) {
+        if (!stripe) {
+            throw new Error('Payment service not available - Stripe not configured');
+        }
         try {
             const plan = SUBSCRIPTION_PLANS[planId.toUpperCase()];
             if (!plan || !plan.priceId) {
@@ -137,6 +147,9 @@ class PaymentService {
      * Get or create Stripe customer
      */
     async getOrCreateCustomer(userId) {
+        if (!stripe) {
+            throw new Error('Payment service not available - Stripe not configured');
+        }
         const db = admin.firestore();
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.data();
@@ -308,6 +321,9 @@ class PaymentService {
      * Get invoices for user
      */
     async getUserInvoices(userId) {
+        if (!stripe) {
+            return [];
+        }
         const db = admin.firestore();
         const userDoc = await db.collection('users').doc(userId).get();
         const stripeCustomerId = userDoc.data().stripeCustomerId;
@@ -339,7 +355,7 @@ class PaymentService {
         const userDoc = await db.collection('users').doc(userId).get();
         const subscription = userDoc.data().subscription;
 
-        if (subscription && subscription.stripeSubscriptionId) {
+        if (stripe && subscription && subscription.stripeSubscriptionId) {
             await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
         }
 
