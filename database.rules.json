@@ -1,0 +1,34 @@
+{
+    "rules": {
+        "users": {
+            "$uid": {
+                ".read": "$uid === auth.uid",
+                ".write": "$uid === auth.uid"
+            }
+        },
+        "patients": {
+            "$patientId": {
+                ".read": "data.child('guardianId').val() === auth.uid",
+                ".write": "data.child('guardianId').val() === auth.uid || !data.exists()",
+                "vitals": {
+                    ".read": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid",
+                    ".write": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid"
+                },
+                "alerts": {
+                    ".read": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid",
+                    ".write": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid"
+                },
+                "events": {
+                    ".read": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid",
+                    ".write": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid"
+                }
+            }
+        },
+        "notifications": {
+            "$uid": {
+                ".read": "$uid === auth.uid",
+                ".write": "$uid === auth.uid"
+            }
+        }
+    }
+}

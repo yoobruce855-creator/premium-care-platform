@@ -1,0 +1,14 @@
+&lt;svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192"&gt;
+  &lt;defs&gt;
+    &lt;linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%"&gt;
+      &lt;stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" /&gt;
+      &lt;stop offset="100%" style="stop-color:#a855f7;stop-opacity:1" /&gt;
+    &lt;/linearGradient&gt;
+  &lt;/defs&gt;
+  &lt;rect width="192" height="192" rx="38" fill="url(#grad1)"/&gt;
+  &lt;!-- Heart shape --&gt;
+  &lt;path d="M96 150 C75 133, 45 105, 45 75 C45 56, 56 45, 71 45 C82 45, 90 51, 96 60 C102 51, 110 45, 121 45 C136 45, 147 56, 147 75 C147 105, 117 133, 96 150 Z" fill="white" opacity="0.95"/&gt;
+  &lt;!-- Medical cross --&gt;
+  &lt;rect x="90" y="68" width="12" height="30" fill="#6366f1" rx="2"/&gt;
+  &lt;rect x="81" y="77" width="30" height="12" fill="#6366f1" rx="2"/&gt;
+&lt;/svg&gt;

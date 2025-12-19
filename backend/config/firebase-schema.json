@@ -1,0 +1,189 @@
+{
+    "description": "Firebase Realtime Database Schema for Premium Care Platform",
+    "version": "1.0.0",
+    "schema": {
+        "users": {
+            "$userId": {
+                "id": "string",
+                "email": "string",
+                "name": "string",
+                "phone": "string",
+                "role": "guardian | admin | patient",
+                "profileImage": "string (URL)",
+                "subscription": {
+                    "plan": "free | basic | premium",
+                    "status": "active | inactive | cancelled",
+                    "startDate": "timestamp",
+                    "endDate": "timestamp"
+                },
+                "settings": {
+                    "notifications": {
+                        "email": "boolean",
+                        "push": "boolean",
+                        "sms": "boolean"
+                    },
+                    "language": "string",
+                    "timezone": "string"
+                },
+                "createdAt": "timestamp",
+                "updatedAt": "timestamp"
+            }
+        },
+        "patients": {
+            "$patientId": {
+                "id": "string",
+                "name": "string",
+                "age": "number",
+                "gender": "male | female | other",
+                "medicalInfo": {
+                    "bloodType": "string",
+                    "allergies": "array",
+                    "medications": "array",
+                    "conditions": "array"
+                },
+                "guardians": "array of userId",
+                "status": "normal | warning | emergency",
+                "location": {
+                    "address": "string",
+                    "coordinates": {
+                        "lat": "number",
+                        "lng": "number"
+                    }
+                },
+                "emergencyContacts": "array",
+                "createdAt": "timestamp",
+                "updatedAt": "timestamp"
+            }
+        },
+        "vitals": {
+            "$patientId": {
+                "$timestamp": {
+                    "heartRate": "number",
+                    "respiratoryRate": "number",
+                    "temperature": "number (optional)",
+                    "bloodPressure": {
+                        "systolic": "number (optional)",
+                        "diastolic": "number (optional)"
+                    },
+                    "oxygenSaturation": "number (optional)",
+                    "activity": "normal | active | resting | sleeping",
+                    "movement": {
+                        "x": "number",
+                        "y": "number",
+                        "z": "number"
+                    },
+                    "confidence": "number (0-1)",
+                    "source": "sensor | manual | smartphone",
+                    "timestamp": "timestamp"
+                }
+            }
+        },
+        "alerts": {
+            "$patientId": {
+                "$alertId": {
+                    "id": "string",
+                    "type": "fall | apnea | abnormal_heart_rate | abnormal_respiration | emergency_button",
+                    "severity": "low | medium | high | critical",
+                    "status": "pending | acknowledged | resolved",
+                    "message": "string",
+                    "data": "object (alert-specific data)",
+                    "acknowledgedBy": "userId (optional)",
+                    "acknowledgedAt": "timestamp (optional)",
+                    "resolvedAt": "timestamp (optional)",
+                    "notificationsSent": {
+                        "email": "boolean",
+                        "push": "boolean",
+                        "sms": "boolean"
+                    },
+                    "timestamp": "timestamp"
+                }
+            }
+        },
+        "events": {
+            "$patientId": {
+                "$eventId": {
+                    "id": "string",
+                    "type": "status_change | vital_recorded | alert_created | alert_resolved",
+                    "description": "string",
+                    "data": "object",
+                    "userId": "string (optional)",
+                    "timestamp": "timestamp"
+                }
+            }
+        },
+        "sessions": {
+            "$sessionId": {
+                "userId": "string",
+                "token": "string (hashed)",
+                "refreshToken": "string (hashed)",
+                "deviceInfo": {
+                    "userAgent": "string",
+                    "ip": "string",
+                    "deviceType": "web | mobile | tablet"
+                },
+                "createdAt": "timestamp",
+                "expiresAt": "timestamp",
+                "lastActivity": "timestamp"
+            }
+        },
+        "subscriptions": {
+            "$userId": {
+                "plan": "free | basic | premium",
+                "status": "active | inactive | cancelled | past_due",
+                "stripeCustomerId": "string",
+                "stripeSubscriptionId": "string",
+                "currentPeriodStart": "timestamp",
+                "currentPeriodEnd": "timestamp",
+                "cancelAtPeriodEnd": "boolean",
+                "paymentHistory": {
+                    "$paymentId": {
+                        "amount": "number",
+                        "currency": "string",
+                        "status": "succeeded | failed | refunded",
+                        "stripePaymentIntentId": "string",
+                        "timestamp": "timestamp"
+                    }
+                }
+            }
+        },
+        "analytics": {
+            "daily": {
+                "$date": {
+                    "activeUsers": "number",
+                    "newUsers": "number",
+                    "alerts": {
+                        "total": "number",
+                        "byType": "object"
+                    },
+                    "vitalsRecorded": "number"
+                }
+            }
+        }
+    },
+    "indexes": {
+        "vitals": {
+            "$patientId": {
+                ".indexOn": [
+                    "timestamp"
+                ]
+            }
+        },
+        "alerts": {
+            "$patientId": {
+                ".indexOn": [
+                    "timestamp",
+                    "status",
+                    "severity"
+                ]
+            }
+        },
+        "events": {
+            "$patientId": {
+                ".indexOn": [
+                    "timestamp",
+                    "type"
+                ]
+            }
+        }
+    }
+}
