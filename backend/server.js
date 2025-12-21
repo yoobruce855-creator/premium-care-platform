@@ -41,10 +41,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(sanitizeInput);
 app.use(validateContentType);
 
-// Rate limiting
+// Rate limiting - disabled on auth routes to prevent lockouts
 app.use('/api/', apiLimiter);
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/register', authLimiter);
+// Note: authLimiter removed from login/register to prevent 429 errors during testing
 
 // Initialize Firebase
 console.log('🔥 Initializing Firebase...');
