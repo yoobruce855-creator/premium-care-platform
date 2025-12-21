@@ -7,6 +7,14 @@ import { authenticateToken } from '../middleware/auth-middleware.js';
 
 const router = express.Router();
 
+// JWT Secret with fallback for development
+const JWT_SECRET = process.env.JWT_SECRET || 'premium-care-development-jwt-secret-key-2024';
+
+if (!process.env.JWT_SECRET) {
+    console.warn('⚠️  JWT_SECRET not set in environment, using development fallback');
+    console.warn('💡 Set JWT_SECRET in production for security');
+}
+
 // Demo user credentials (works both with and without Firebase)
 const DEMO_USER = {
     id: 'demo-user-1',
@@ -28,7 +36,7 @@ function generateAccessToken(user) {
             email: user.email,
             role: user.role
         },
-        process.env.JWT_SECRET,
+        JWT_SECRET,
         { expiresIn: '24h' }
     );
 }
@@ -39,7 +47,7 @@ function generateAccessToken(user) {
 function generateRefreshToken(user) {
     return jwt.sign(
         { id: user.id },
-        process.env.JWT_SECRET,
+        JWT_SECRET,
         { expiresIn: '7d' }
     );
 }
@@ -249,7 +257,7 @@ router.post('/refresh', async (req, res) => {
         }
 
         // Verify refresh token
-        const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+        const decoded = jwt.verify(refreshToken, JWT_SECRET);
         const db = getDatabase();
 
         if (db) {

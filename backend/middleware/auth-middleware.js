@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken';
 import { getDatabase } from '../config/firebase.js';
 
+// JWT Secret with fallback for development
+const JWT_SECRET = process.env.JWT_SECRET || 'premium-care-development-jwt-secret-key-2024';
+
 /**
  * Verify JWT token and attach user to request
  */
@@ -13,7 +16,7 @@ export function authenticateToken(req, res, next) {
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, JWT_SECRET);
         req.user = decoded;
         next();
     } catch (error) {

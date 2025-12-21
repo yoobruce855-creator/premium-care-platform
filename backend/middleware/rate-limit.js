@@ -1,152 +1,108 @@
 import rateLimit from 'express-rate-limit';
-import RedisStore from 'rate-limit-redis';
-import { createClient } from 'redis';
 
 /**
- * Redis client for distributed rate limiting
- * Falls back to memory store if Redis is not available
+ * Rate limiting middleware - Synchronous initialization
+ * Uses in-memory store for simplicity and reliability
+ * Redis can be added later for distributed deployments
  */
-let redisClient = null;
-
-async function getRedisClient() {
-    if (redisClient) return redisClient;
-
-    if (process.env.REDIS_URL) {
-        try {
-            redisClient = createClient({
-                url: process.env.REDIS_URL,
-                socket: {
-                    reconnectStrategy: (retries) => {
-                        if (retries > 10) {
-                            console.error('❌ Redis connection failed after 10 retries');
-                            return new Error('Redis connection failed');
-                        }
-                        return retries * 100;
-                    }
-                }
-            });
-
-            redisClient.on('error', (err) => console.warn('⚠️  Redis Client Error:', err.message));
-            redisClient.on('connect', () => console.log('✅ Redis connected for rate limiting'));
-
-            await redisClient.connect();
-            return redisClient;
-        } catch (error) {
-            console.warn('⚠️  Redis not available, using memory store for rate limiting');
-            return null;
-        }
-    }
-
-    console.log('💡 Redis URL not configured, using memory store for rate limiting');
-    return null;
-}
-
-/**
- * Create rate limiter with Redis or memory store
- */
-async function createRateLimiter(options) {
-    const client = await getRedisClient();
-
-    const limiterOptions = {
-        windowMs: options.windowMs || 15 * 60 * 1000, // 15 minutes default
-        max: options.max || 100,
-        message: options.message || 'Too many requests, please try again later.',
-        standardHeaders: true,
-        legacyHeaders: false,
-        ...options
-    };
-
-    if (client) {
-        limiterOptions.store = new RedisStore({
-            client: client,
-            prefix: 'rl:',
-        });
-    }
-
-    return rateLimit(limiterOptions);
-}
 
 /**
  * General API rate limiter
- * 100 requests per 15 minutes
+ * 200 requests per 15 minutes (generous for development)
  */
-export const apiLimiter = await createRateLimiter({
+export const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: 200,
     message: {
         error: 'Too many requests from this IP, please try again later.',
         retryAfter: 900
-    }
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Skip rate limiting for health checks
+    skip: (req) => req.path === '/health'
 });
 
 /**
  * Authentication rate limiter
- * 50 login attempts per 15 minutes (relaxed for easier testing)
+ * 100 login attempts per 15 minutes (very relaxed for testing)
  */
-export const authLimiter = await createRateLimiter({
+export const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 50,
+    max: 100,
     message: {
         error: 'Too many login attempts, please try again later.',
         retryAfter: 900
     },
+    standardHeaders: true,
+    legacyHeaders: false,
     skipSuccessfulRequests: true
 });
 
 /**
  * Strict rate limiter for sensitive operations
- * 10 requests per hour
+ * 20 requests per hour
  */
-export const strictLimiter = await createRateLimiter({
+export const strictLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
-    max: 10,
+    max: 20,
     message: {
         error: 'Rate limit exceeded for this operation.',
         retryAfter: 3600
-    }
+    },
+    standardHeaders: true,
+    legacyHeaders: false
 });
 
 /**
  * WebSocket connection rate limiter
- * 20 connections per minute
+ * 50 connections per minute
  */
-export const wsLimiter = await createRateLimiter({
+export const wsLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 20,
+    max: 50,
     message: {
         error: 'Too many WebSocket connections, please try again later.',
         retryAfter: 60
-    }
+    },
+    standardHeaders: true,
+    legacyHeaders: false
 });
 
 /**
  * Alert creation rate limiter
- * 30 alerts per minute (prevents spam)
+ * 60 alerts per minute (prevents spam)
  */
-export const alertLimiter = await createRateLimiter({
+export const alertLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 30,
+    max: 60,
     message: {
         error: 'Too many alerts created, please slow down.',
         retryAfter: 60
-    }
+    },
+    standardHeaders: true,
+    legacyHeaders: false
 });
 
 /**
  * Custom rate limiter factory
  */
-export async function createCustomLimiter(options) {
-    return await createRateLimiter(options);
+export function createCustomLimiter(options) {
+    return rateLimit({
+        windowMs: options.windowMs || 15 * 60 * 1000,
+        max: options.max || 100,
+        message: options.message || 'Too many requests, please try again later.',
+        standardHeaders: true,
+        legacyHeaders: false,
+        ...options
+    });
 }
 
 /**
- * Cleanup function
+ * Cleanup function (no-op for memory store)
  */
-export async function disconnectRedis() {
-    if (redisClient) {
-        await redisClient.quit();
-        console.log('🔌 Redis disconnected');
-    }
+export function disconnectRedis() {
+    console.log('💡 Using in-memory rate limiting, no Redis to disconnect');
 }
 
 export default {
