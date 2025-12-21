@@ -58,10 +58,17 @@ function generateRefreshToken(user) {
  */
 router.post('/register', async (req, res) => {
     try {
+        // Debug logging
+        console.log('📝 Registration request received');
+        console.log('📝 Request body:', JSON.stringify(req.body));
+
         const { email, password, name, phone } = req.body;
+
+        console.log('📝 Parsed fields - email:', email, 'name:', name, 'phone:', phone);
 
         // Validation
         if (!email || !password || !name) {
+            console.log('❌ Validation failed - missing fields');
             return res.status(400).json({ error: 'Email, password, and name are required' });
         }
 

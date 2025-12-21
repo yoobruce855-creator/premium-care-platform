@@ -89,8 +89,8 @@ export function corsConfig() {
  * Note: Password and other sensitive fields are excluded to prevent corruption
  */
 export function sanitizeInput(req, res, next) {
-    // Fields that should NOT be sanitized (passwords, tokens, etc.)
-    const excludedFields = ['password', 'currentPassword', 'newPassword', 'refreshToken', 'token'];
+    // Fields that should NOT be sanitized (passwords, tokens, user data, etc.)
+    const excludedFields = ['password', 'currentPassword', 'newPassword', 'refreshToken', 'token', 'name', 'email', 'phone'];
 
     const sanitize = (obj, parentKey = '') => {
         if (typeof obj === 'string') {
