@@ -86,21 +86,32 @@ export function corsConfig() {
 
 /**
  * Sanitize user input to prevent XSS
+ * Note: Password and other sensitive fields are excluded to prevent corruption
  */
 export function sanitizeInput(req, res, next) {
-    const sanitize = (obj) => {
+    // Fields that should NOT be sanitized (passwords, tokens, etc.)
+    const excludedFields = ['password', 'currentPassword', 'newPassword', 'refreshToken', 'token'];
+
+    const sanitize = (obj, parentKey = '') => {
         if (typeof obj === 'string') {
             return obj
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#x27;')
-                .replace(/\//g, '&#x2F;');
+                .replace(/'/g, '&#x27;');
+            // Note: Not escaping / anymore as it breaks passwords
         }
         if (typeof obj === 'object' && obj !== null) {
+            const result = Array.isArray(obj) ? [] : {};
             Object.keys(obj).forEach(key => {
-                obj[key] = sanitize(obj[key]);
+                // Skip sanitization for excluded fields
+                if (excludedFields.includes(key)) {
+                    result[key] = obj[key];
+                } else {
+                    result[key] = sanitize(obj[key], key);
+                }
             });
+            return result;
         }
         return obj;
     };
@@ -177,8 +188,14 @@ export function notFoundHandler(req, res) {
 
 /**
  * Validate content type
+ * Note: OPTIONS requests are skipped to allow CORS preflight
  */
 export function validateContentType(req, res, next) {
+    // Skip OPTIONS requests (CORS preflight)
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
+
     if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
         const contentType = req.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
