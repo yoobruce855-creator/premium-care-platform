@@ -33,29 +33,54 @@ export function securityHeaders() {
  * CORS configuration for production
  */
 export function corsConfig() {
+    // Build allowed origins list from environment and hardcoded production domains
     const allowedOrigins = [
-        process.env.FRONTEND_URL || 'http://localhost:3000',
-        'http://localhost:5173', // Vite dev server
+        // Environment variable (primary frontend URL)
+        process.env.FRONTEND_URL,
+        // Production domains - explicitly add Vercel URLs
+        'https://premium-care-platform.vercel.app',
+        'https://premium-care-platform-git-main-yoobruce855-creator.vercel.app',
+        // Local development
+        'http://localhost:5173',
         'http://localhost:3000',
-        // Add production domains here
-    ];
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:3000',
+    ].filter(Boolean); // Remove undefined/null values
+
+    console.log('🔐 CORS Allowed Origins:', allowedOrigins);
 
     return cors({
         origin: function (origin, callback) {
-            // Allow requests with no origin (mobile apps, Postman, etc.)
-            if (!origin) return callback(null, true);
-
-            if (allowedOrigins.indexOf(origin) === -1) {
-                const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-                return callback(new Error(msg), false);
+            // Allow requests with no origin (mobile apps, Postman, curl, server-to-server, etc.)
+            if (!origin) {
+                return callback(null, true);
             }
-            return callback(null, true);
+
+            // Check if origin is in the allowed list
+            if (allowedOrigins.includes(origin)) {
+                return callback(null, true);
+            }
+
+            // Allow all Vercel preview/deployment URLs for this project
+            if (origin.includes('premium-care-platform') && origin.includes('vercel.app')) {
+                console.log('✅ Allowing Vercel preview URL:', origin);
+                return callback(null, true);
+            }
+
+            // Log rejected origin for debugging
+            console.warn('⚠️ CORS blocked origin:', origin);
+            console.warn('   Allowed origins:', allowedOrigins);
+
+            // Return false but don't throw an error - let browser handle CORS rejection
+            return callback(null, false);
         },
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
         exposedHeaders: ['Content-Range', 'X-Content-Range'],
-        maxAge: 600 // 10 minutes
+        maxAge: 600, // 10 minutes
+        preflightContinue: false,
+        optionsSuccessStatus: 204
     });
 }
 
