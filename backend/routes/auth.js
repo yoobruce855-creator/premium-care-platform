@@ -7,11 +7,11 @@ import { authenticateToken } from '../middleware/auth-middleware.js';
 
 const router = express.Router();
 
-// Demo user credentials (for testing without Firebase)
+// Demo user credentials (works both with and without Firebase)
 const DEMO_USER = {
     id: 'demo-user-1',
     email: 'demo@example.com',
-    password: '$2a$10$8ZqrQxKxDZ0qKZ0qKZ0qKOYxGxGxGxGxGxGxGxGxGxGxGxGxGxG', // demo123
+    password: '$2a$10$C2frcsZ9k6epkzDi1mTVP.mwy5PtOAB8GjkcEFA6cIroRxJReNN1.', // demo123
     name: '데모 사용자',
     phone: '010-1234-5678',
     role: 'guardian',
@@ -156,10 +156,29 @@ router.post('/login', async (req, res) => {
             return res.status(400).json({ error: 'Email and password are required' });
         }
 
+        // Check demo account first (works regardless of Firebase connection)
+        if (email === DEMO_USER.email) {
+            const isValidDemoPassword = await bcrypt.compare(password, DEMO_USER.password);
+            if (isValidDemoPassword) {
+                const accessToken = generateAccessToken(DEMO_USER);
+                const refreshToken = generateRefreshToken(DEMO_USER);
+
+                const { password: _, ...userWithoutPassword } = DEMO_USER;
+
+                console.log('✅ Demo user login successful');
+                return res.json({
+                    user: userWithoutPassword,
+                    token: accessToken,
+                    refreshToken,
+                    demo: true
+                });
+            }
+        }
+
         const db = getDatabase();
 
         if (db) {
-            // Find user by email
+            // Find user by email in Firebase
             const usersSnapshot = await db.ref('users').orderByChild('email').equalTo(email).once('value');
 
             if (!usersSnapshot.exists()) {
@@ -201,30 +220,14 @@ router.post('/login', async (req, res) => {
             // Return user without password
             const { password: _, ...userWithoutPassword } = user;
 
+            console.log('✅ Firebase user login successful:', email);
             res.json({
                 user: userWithoutPassword,
                 token: accessToken,
                 refreshToken
             });
         } else {
-            // Demo mode - check demo credentials
-            if (email === DEMO_USER.email) {
-                const isValidPassword = await bcrypt.compare(password, DEMO_USER.password);
-                if (isValidPassword) {
-                    const accessToken = generateAccessToken(DEMO_USER);
-                    const refreshToken = generateRefreshToken(DEMO_USER);
-
-                    const { password: _, ...userWithoutPassword } = DEMO_USER;
-
-                    return res.json({
-                        user: userWithoutPassword,
-                        token: accessToken,
-                        refreshToken,
-                        demo: true
-                    });
-                }
-            }
-
+            // Demo mode only - Firebase not connected
             res.status(401).json({ error: 'Invalid credentials' });
         }
     } catch (error) {
