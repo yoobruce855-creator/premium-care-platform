@@ -81,11 +81,11 @@ export const apiLimiter = await createRateLimiter({
 
 /**
  * Authentication rate limiter
- * 20 login attempts per 15 minutes (reasonable for production use)
+ * 50 login attempts per 15 minutes (relaxed for easier testing)
  */
 export const authLimiter = await createRateLimiter({
     windowMs: 15 * 60 * 1000,
-    max: 20,
+    max: 50,
     message: {
         error: 'Too many login attempts, please try again later.',
         retryAfter: 900
