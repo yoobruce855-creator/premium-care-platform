@@ -79,73 +79,104 @@ router.post('/register', async (req, res) => {
         const db = getDatabase();
         const userId = uuidv4();
 
+        console.log('📝 Step 1: Got database reference, userId:', userId);
+
         if (db) {
-            // Check if user already exists
-            const usersSnapshot = await db.ref('users').orderByChild('email').equalTo(email).once('value');
-            if (usersSnapshot.exists()) {
-                return res.status(409).json({ error: 'User already exists' });
-            }
+            try {
+                // Check if user already exists
+                console.log('📝 Step 2: Checking if user exists...');
+                const usersSnapshot = await db.ref('users').orderByChild('email').equalTo(email).once('value');
+                console.log('📝 Step 2 complete: User exists check done');
 
-            // Hash password
-            const hashedPassword = await bcrypt.hash(password, 10);
+                if (usersSnapshot.exists()) {
+                    return res.status(409).json({ error: 'User already exists' });
+                }
 
-            // Create user
-            const newUser = {
-                id: userId,
-                email,
-                password: hashedPassword,
-                name,
-                phone: phone || '',
-                role: 'guardian',
-                profileImage: '',
-                subscription: {
-                    plan: 'free',
-                    status: 'active',
-                    startDate: Date.now(),
-                    endDate: null
-                },
-                settings: {
-                    notifications: {
-                        email: true,
-                        push: true,
-                        sms: false
+                // Hash password
+                console.log('📝 Step 3: Hashing password...');
+                const hashedPassword = await bcrypt.hash(password, 10);
+                console.log('📝 Step 3 complete: Password hashed');
+
+                // Create user object
+                const newUser = {
+                    id: userId,
+                    email,
+                    password: hashedPassword,
+                    name,
+                    phone: phone || '',
+                    role: 'guardian',
+                    profileImage: '',
+                    subscription: {
+                        plan: 'free',
+                        status: 'active',
+                        startDate: Date.now(),
+                        endDate: null
                     },
-                    language: 'ko',
-                    timezone: 'Asia/Seoul'
-                },
-                createdAt: Date.now(),
-                updatedAt: Date.now()
-            };
+                    settings: {
+                        notifications: {
+                            email: true,
+                            push: true,
+                            sms: false
+                        },
+                        language: 'ko',
+                        timezone: 'Asia/Seoul'
+                    },
+                    createdAt: Date.now(),
+                    updatedAt: Date.now()
+                };
+                console.log('📝 Step 4: User object created');
 
-            await db.ref(`users/${userId}`).set(newUser);
+                // Write user to database with timeout
+                console.log('📝 Step 5: Writing user to database...');
+                const writePromise = db.ref(`users/${userId}`).set(newUser);
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Firebase write timeout after 10 seconds')), 10000)
+                );
 
-            // Generate tokens
-            const accessToken = generateAccessToken(newUser);
-            const refreshToken = generateRefreshToken(newUser);
+                await Promise.race([writePromise, timeoutPromise]);
+                console.log('📝 Step 5 complete: User written to database');
 
-            // Save session
-            await db.ref(`sessions/${uuidv4()}`).set({
-                userId,
-                token: await bcrypt.hash(accessToken, 10),
-                refreshToken: await bcrypt.hash(refreshToken, 10),
-                deviceInfo: {
-                    userAgent: req.get('user-agent'),
-                    ip: req.ip,
-                    deviceType: 'web'
-                },
-                createdAt: Date.now(),
-                expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
-                lastActivity: Date.now()
-            });
+                // Generate tokens
+                console.log('📝 Step 6: Generating tokens...');
+                const accessToken = generateAccessToken(newUser);
+                const refreshToken = generateRefreshToken(newUser);
+                console.log('📝 Step 6 complete: Tokens generated');
 
-            // Return user without password
-            const { password: _, ...userWithoutPassword } = newUser;
+                // Save session (with timeout)
+                console.log('📝 Step 7: Saving session...');
+                const sessionWritePromise = db.ref(`sessions/${uuidv4()}`).set({
+                    userId,
+                    token: await bcrypt.hash(accessToken, 10),
+                    refreshToken: await bcrypt.hash(refreshToken, 10),
+                    deviceInfo: {
+                        userAgent: req.get('user-agent'),
+                        ip: req.ip,
+                        deviceType: 'web'
+                    },
+                    createdAt: Date.now(),
+                    expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
+                    lastActivity: Date.now()
+                });
+                const sessionTimeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Session write timeout after 10 seconds')), 10000)
+                );
 
-            res.status(201).json({
-                user: userWithoutPassword,
-                token: accessToken,
-                refreshToken
-            });
+                await Promise.race([sessionWritePromise, sessionTimeoutPromise]);
+                console.log('📝 Step 7 complete: Session saved');
+
+                // Return user without password
+                const { password: _, ...userWithoutPassword } = newUser;
+                console.log('📝 Step 8: Sending success response');
+
+                res.status(201).json({
+                    user: userWithoutPassword,
+                    token: accessToken,
+                    refreshToken
+                });
+            } catch (dbError) {
+                console.error('❌ Database operation failed:', dbError.message);
+                return res.status(500).json({ error: 'Database operation failed: ' + dbError.message });
+            }
         } else {
             // Demo mode
             res.status(503).json({
