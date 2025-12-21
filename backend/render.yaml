@@ -10,7 +10,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 5000
+        value: 10000
       - key: JWT_SECRET
         generateValue: true
       - key: FIREBASE_PROJECT_ID
@@ -22,5 +22,5 @@ services:
       - key: FIREBASE_DATABASE_URL
         sync: false
       - key: FRONTEND_URL
-        value: https://your-frontend-url.vercel.app
+        value: https://premium-care-platform.vercel.app
     healthCheckPath: /health
