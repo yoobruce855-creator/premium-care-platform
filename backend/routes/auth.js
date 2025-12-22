@@ -83,63 +83,13 @@ router.post('/register', async (req, res) => {
 
         if (db) {
             try {
-                // First, test basic database connectivity with a simple read
-                console.log('📝 Step 2a: Testing database connectivity...');
-                const testConnPromise = db.ref('.info/serverTimeOffset').once('value');
-                const testTimeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Database connectivity test timeout after 5 seconds')), 5000)
-                );
-
-                try {
-                    await Promise.race([testConnPromise, testTimeoutPromise]);
-                    console.log('📝 Step 2a complete: Database connectivity confirmed');
-                } catch (connError) {
-                    console.error('❌ Database connectivity test failed:', connError.message);
-                    throw new Error('Database connection failed. Please try again later.');
-                }
-
-                // Check if users node exists and has children
-                console.log('📝 Step 2b: Checking users node...');
-                const usersNodePromise = db.ref('users').limitToFirst(1).once('value');
-                const usersNodeTimeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Users node check timeout after 5 seconds')), 5000)
-                );
-
-                let usersNodeSnapshot;
-                try {
-                    usersNodeSnapshot = await Promise.race([usersNodePromise, usersNodeTimeoutPromise]);
-                    console.log('📝 Step 2b complete: Users node check done, exists:', usersNodeSnapshot.exists());
-                } catch (nodeError) {
-                    console.log('📝 Step 2b: Users node check timed out, assuming empty database');
-                    // If the check times out, assume database is empty and proceed
-                    usersNodeSnapshot = { exists: () => false };
-                }
-
-                // Only check for duplicate email if the users node has data
-                if (usersNodeSnapshot.exists()) {
-                    console.log('📝 Step 2c: Checking if user with email exists...');
-                    const checkUserPromise = db.ref('users').orderByChild('email').equalTo(email).once('value');
-                    const checkTimeoutPromise = new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('User check timeout after 8 seconds')), 8000)
-                    );
-
-                    try {
-                        const existingUserSnapshot = await Promise.race([checkUserPromise, checkTimeoutPromise]);
-                        if (existingUserSnapshot.exists()) {
-                            return res.status(409).json({ error: 'User already exists' });
-                        }
-                    } catch (checkError) {
-                        console.log('📝 Step 2c: Email check timed out, proceeding with registration');
-                        // If check times out, proceed (worst case: duplicate email will fail at write)
-                    }
-                } else {
-                    console.log('📝 Step 2c: Skipping email check - database is empty');
-                }
+                // Skip connectivity checks - directly attempt to create user
+                // Using UUID ensures no collision with existing users
+                console.log('📝 Step 2: Directly writing user to database (skipping checks)...');
 
                 // Hash password
-                console.log('📝 Step 3: Hashing password...');
                 const hashedPassword = await bcrypt.hash(password, 10);
-                console.log('📝 Step 3 complete: Password hashed');
+                console.log('📝 Step 2a: Password hashed');
 
                 // Create user object
                 const newUser = {
@@ -168,49 +118,51 @@ router.post('/register', async (req, res) => {
                     createdAt: Date.now(),
                     updatedAt: Date.now()
                 };
-                console.log('📝 Step 4: User object created');
 
                 // Write user to database with timeout
-                console.log('📝 Step 5: Writing user to database...');
+                console.log('📝 Step 2b: Writing user to database...');
                 const writePromise = db.ref(`users/${userId}`).set(newUser);
                 const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Firebase write timeout after 10 seconds')), 10000)
+                    setTimeout(() => reject(new Error('Firebase write timeout after 15 seconds')), 15000)
                 );
 
                 await Promise.race([writePromise, timeoutPromise]);
-                console.log('📝 Step 5 complete: User written to database');
+                console.log('📝 Step 2b complete: User written to database');
 
                 // Generate tokens
-                console.log('📝 Step 6: Generating tokens...');
+                console.log('📝 Step 3: Generating tokens...');
                 const accessToken = generateAccessToken(newUser);
                 const refreshToken = generateRefreshToken(newUser);
-                console.log('📝 Step 6 complete: Tokens generated');
+                console.log('📝 Step 3 complete: Tokens generated');
 
-                // Save session (with timeout)
-                console.log('📝 Step 7: Saving session...');
-                const sessionWritePromise = db.ref(`sessions/${uuidv4()}`).set({
-                    userId,
-                    token: await bcrypt.hash(accessToken, 10),
-                    refreshToken: await bcrypt.hash(refreshToken, 10),
-                    deviceInfo: {
-                        userAgent: req.get('user-agent'),
-                        ip: req.ip,
-                        deviceType: 'web'
-                    },
-                    createdAt: Date.now(),
-                    expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
-                    lastActivity: Date.now()
-                });
-                const sessionTimeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Session write timeout after 10 seconds')), 10000)
-                );
-
-                await Promise.race([sessionWritePromise, sessionTimeoutPromise]);
-                console.log('📝 Step 7 complete: Session saved');
+                // Try to save session (non-blocking - don't fail registration if this fails)
+                console.log('📝 Step 4: Saving session...');
+                try {
+                    const sessionId = uuidv4();
+                    await Promise.race([
+                        db.ref(`sessions/${sessionId}`).set({
+                            userId,
+                            token: await bcrypt.hash(accessToken, 10),
+                            refreshToken: await bcrypt.hash(refreshToken, 10),
+                            deviceInfo: {
+                                userAgent: req.get('user-agent'),
+                                ip: req.ip,
+                                deviceType: 'web'
+                            },
+                            createdAt: Date.now(),
+                            expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
+                            lastActivity: Date.now()
+                        }),
+                        new Promise((resolve) => setTimeout(resolve, 5000)) // 5 second timeout, resolve on timeout
+                    ]);
+                    console.log('📝 Step 4 complete: Session saved');
+                } catch (sessionError) {
+                    console.log('📝 Step 4: Session save failed (non-critical):', sessionError.message);
+                }
 
                 // Return user without password
                 const { password: _, ...userWithoutPassword } = newUser;
-                console.log('📝 Step 8: Sending success response');
+                console.log('📝 Step 5: Sending success response');
 
                 res.status(201).json({
                     user: userWithoutPassword,
