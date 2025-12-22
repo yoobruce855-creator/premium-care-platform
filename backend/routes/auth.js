@@ -83,9 +83,13 @@ router.post('/register', async (req, res) => {
 
         if (db) {
             try {
-                // Check if user already exists
+                // Check if user already exists with timeout
                 console.log('📝 Step 2: Checking if user exists...');
-                const usersSnapshot = await db.ref('users').orderByChild('email').equalTo(email).once('value');
+                const checkUserPromise = db.ref('users').orderByChild('email').equalTo(email).once('value');
+                const checkTimeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('User check timeout after 10 seconds')), 10000)
+                );
+                const usersSnapshot = await Promise.race([checkUserPromise, checkTimeoutPromise]);
                 console.log('📝 Step 2 complete: User exists check done');
 
                 if (usersSnapshot.exists()) {
