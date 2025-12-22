@@ -119,14 +119,27 @@ router.post('/register', async (req, res) => {
                     updatedAt: Date.now()
                 };
 
-                // Write user to database with timeout
+                // Write user to database with extended timeout and retry
                 console.log('📝 Step 2b: Writing user to database...');
-                const writePromise = db.ref(`users/${userId}`).set(newUser);
-                const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Firebase write timeout after 15 seconds')), 15000)
-                );
 
-                await Promise.race([writePromise, timeoutPromise]);
+                const writeUserToDatabase = async (retries = 3) => {
+                    for (let attempt = 1; attempt <= retries; attempt++) {
+                        try {
+                            const writePromise = db.ref(`users/${userId}`).set(newUser);
+                            const timeoutPromise = new Promise((_, reject) =>
+                                setTimeout(() => reject(new Error(`Firebase write timeout after 30s (attempt ${attempt}/${retries})`)), 30000)
+                            );
+                            await Promise.race([writePromise, timeoutPromise]);
+                            return true;
+                        } catch (err) {
+                            console.log(`⚠️ Attempt ${attempt}/${retries} failed:`, err.message);
+                            if (attempt === retries) throw err;
+                            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s between retries
+                        }
+                    }
+                };
+
+                await writeUserToDatabase();
                 console.log('📝 Step 2b complete: User written to database');
 
                 // Generate tokens
@@ -220,54 +233,63 @@ router.post('/login', async (req, res) => {
         const db = getDatabase();
 
         if (db) {
-            // Find user by email in Firebase
-            const usersSnapshot = await db.ref('users').orderByChild('email').equalTo(email).once('value');
+            try {
+                // Find user by email in Firebase with timeout
+                const queryPromise = db.ref('users').orderByChild('email').equalTo(email).once('value');
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Firebase query timeout')), 20000)
+                );
+                const usersSnapshot = await Promise.race([queryPromise, timeoutPromise]);
 
-            if (!usersSnapshot.exists()) {
-                return res.status(401).json({ error: 'Invalid credentials' });
+                if (!usersSnapshot.exists()) {
+                    return res.status(401).json({ error: 'Invalid credentials' });
+                }
+
+                const users = usersSnapshot.val();
+                const userId = Object.keys(users)[0];
+                const user = users[userId];
+
+                // Verify password
+                const isValidPassword = await bcrypt.compare(password, user.password);
+                if (!isValidPassword) {
+                    return res.status(401).json({ error: 'Invalid credentials' });
+                }
+
+                // Generate tokens
+                const accessToken = generateAccessToken(user);
+                const refreshToken = generateRefreshToken(user);
+
+                // Save session (non-blocking)
+                db.ref(`sessions/${uuidv4()}`).set({
+                    userId: user.id,
+                    token: await bcrypt.hash(accessToken, 10),
+                    refreshToken: await bcrypt.hash(refreshToken, 10),
+                    deviceInfo: {
+                        userAgent: req.get('user-agent'),
+                        ip: req.ip,
+                        deviceType: 'web'
+                    },
+                    createdAt: Date.now(),
+                    expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
+                    lastActivity: Date.now()
+                }).catch(err => console.log('⚠️ Session save failed:', err.message));
+
+                // Update last login (non-blocking)
+                db.ref(`users/${user.id}/updatedAt`).set(Date.now()).catch(() => { });
+
+                // Return user without password
+                const { password: _, ...userWithoutPassword } = user;
+
+                console.log('✅ Firebase user login successful:', email);
+                res.json({
+                    user: userWithoutPassword,
+                    token: accessToken,
+                    refreshToken
+                });
+            } catch (dbError) {
+                console.error('❌ Firebase login error:', dbError.message);
+                return res.status(500).json({ error: 'Database error: ' + dbError.message });
             }
-
-            const users = usersSnapshot.val();
-            const userId = Object.keys(users)[0];
-            const user = users[userId];
-
-            // Verify password
-            const isValidPassword = await bcrypt.compare(password, user.password);
-            if (!isValidPassword) {
-                return res.status(401).json({ error: 'Invalid credentials' });
-            }
-
-            // Generate tokens
-            const accessToken = generateAccessToken(user);
-            const refreshToken = generateRefreshToken(user);
-
-            // Save session
-            await db.ref(`sessions/${uuidv4()}`).set({
-                userId: user.id,
-                token: await bcrypt.hash(accessToken, 10),
-                refreshToken: await bcrypt.hash(refreshToken, 10),
-                deviceInfo: {
-                    userAgent: req.get('user-agent'),
-                    ip: req.ip,
-                    deviceType: 'web'
-                },
-                createdAt: Date.now(),
-                expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
-                lastActivity: Date.now()
-            });
-
-            // Update last login
-            await db.ref(`users/${user.id}/updatedAt`).set(Date.now());
-
-            // Return user without password
-            const { password: _, ...userWithoutPassword } = user;
-
-            console.log('✅ Firebase user login successful:', email);
-            res.json({
-                user: userWithoutPassword,
-                token: accessToken,
-                refreshToken
-            });
         } else {
             // Demo mode only - Firebase not connected
             res.status(401).json({ error: 'Invalid credentials' });

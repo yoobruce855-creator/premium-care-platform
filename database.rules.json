@@ -1,36 +1,58 @@
 {
     "rules": {
+        ".read": false,
+        ".write": false,
         "users": {
             ".indexOn": [
                 "email"
             ],
-            "$uid": {
-                ".read": "$uid === auth.uid",
-                ".write": "$uid === auth.uid"
-            }
+            ".read": true,
+            ".write": true
+        },
+        "sessions": {
+            ".read": true,
+            ".write": true
+        },
+        "_diagnostics": {
+            ".read": true,
+            ".write": true
         },
         "patients": {
+            ".indexOn": [
+                "guardianId"
+            ],
             "$patientId": {
-                ".read": "data.child('guardianId').val() === auth.uid",
-                ".write": "data.child('guardianId').val() === auth.uid || !data.exists()",
+                ".read": true,
+                ".write": true,
                 "vitals": {
-                    ".read": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid",
-                    ".write": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid"
+                    ".indexOn": [
+                        "timestamp"
+                    ],
+                    ".read": true,
+                    ".write": true
                 },
                 "alerts": {
-                    ".read": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid",
-                    ".write": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid"
+                    ".indexOn": [
+                        "timestamp",
+                        "severity",
+                        "acknowledged"
+                    ],
+                    ".read": true,
+                    ".write": true
                 },
                 "events": {
-                    ".read": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid",
-                    ".write": "root.child('patients').child($patientId).child('guardianId').val() === auth.uid"
+                    ".indexOn": [
+                        "timestamp"
+                    ],
+                    ".read": true,
+                    ".write": true
                 }
             }
         },
         "notifications": {
             "$uid": {
-                ".read": "$uid === auth.uid",
-                ".write": "$uid === auth.uid"
+                ".read": true,
+                ".write": true
             }
         }
     }

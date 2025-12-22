@@ -65,18 +65,22 @@ export function initializeFirebase() {
         console.log(`   Private Key Starts: ${privateKey.substring(0, 40)}...`);
         console.log(`   Private Key Ends: ...${privateKey.substring(privateKey.length - 40)}`);
 
-        // Test connection with extended timeout
+        // Test connection with extended timeout and better error handling
         db.ref('.info/connected').on('value', (snapshot) => {
-            if (snapshot.val() === true) {
+            const connected = snapshot.val() === true;
+            if (connected) {
                 console.log('✅ Firebase Realtime Database connected');
             } else {
-                console.log('⚠️  Firebase Realtime Database disconnected');
+                console.log('⚠️  Firebase Realtime Database disconnected - this may be normal during startup');
             }
+        }, (error) => {
+            console.error('❌ Firebase connection listener error:', error.message);
         });
 
         console.log('✅ Firebase Admin SDK initialized successfully');
         console.log(`📊 Project: ${process.env.FIREBASE_PROJECT_ID}`);
         console.log(`🔗 Database: ${process.env.FIREBASE_DATABASE_URL}`);
+        console.log(`🌍 Region: ${process.env.FIREBASE_DATABASE_URL?.includes('asia') ? 'Asia' : 'US'}`);
 
         return true;
     } catch (error) {
