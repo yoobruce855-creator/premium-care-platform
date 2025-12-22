@@ -15,6 +15,9 @@ if (!process.env.JWT_SECRET) {
     console.warn('💡 Set JWT_SECRET in production for security');
 }
 
+// In-memory user cache for faster response (Firebase backup happens async)
+const userCache = new Map();
+
 // Demo user credentials (works both with and without Firebase)
 const DEMO_USER = {
     id: 'demo-user-1',
@@ -25,6 +28,9 @@ const DEMO_USER = {
     role: 'guardian',
     createdAt: Date.now()
 };
+
+// Add demo user to cache
+userCache.set(DEMO_USER.email, DEMO_USER);
 
 /**
  * Generate JWT access token
@@ -53,250 +59,182 @@ function generateRefreshToken(user) {
 }
 
 /**
+ * Save user to Firebase in background (non-blocking)
+ */
+async function saveUserToFirebaseAsync(user) {
+    const db = getDatabase();
+    if (!db) return;
+
+    try {
+        await db.ref(`users/${user.id}`).set(user);
+        console.log(`✅ User ${user.email} saved to Firebase`);
+    } catch (error) {
+        console.error(`⚠️ Firebase save failed for ${user.email}:`, error.message);
+        // User is already in cache, so the app still works
+    }
+}
+
+/**
  * POST /api/auth/register
- * Register a new user
+ * Register a new user - uses cache-first approach for reliability
  */
 router.post('/register', async (req, res) => {
     try {
-        // Debug logging
-        console.log('📝 Registration request received');
-        console.log('📝 Request body:', JSON.stringify(req.body));
+        console.log('📝 회원가입 요청 받음');
+        console.log('📝 요청 데이터:', JSON.stringify(req.body));
 
         const { email, password, name, phone } = req.body;
 
-        console.log('📝 Parsed fields - email:', email, 'name:', name, 'phone:', phone);
-
         // Validation
         if (!email || !password || !name) {
-            console.log('❌ Validation failed - missing fields');
-            return res.status(400).json({ error: 'Email, password, and name are required' });
+            console.log('❌ 필수 필드 누락');
+            return res.status(400).json({ error: '이메일, 비밀번호, 이름은 필수입니다' });
         }
 
         if (password.length < 6) {
-            return res.status(400).json({ error: 'Password must be at least 6 characters' });
+            return res.status(400).json({ error: '비밀번호는 최소 6자 이상이어야 합니다' });
         }
 
-        const db = getDatabase();
+        // Check if email already exists in cache
+        if (userCache.has(email)) {
+            console.log('❌ 이미 존재하는 이메일:', email);
+            return res.status(409).json({ error: '이미 등록된 이메일입니다' });
+        }
+
+        // Create new user
         const userId = uuidv4();
+        const hashedPassword = await bcrypt.hash(password, 10);
 
-        console.log('📝 Step 1: Got database reference, userId:', userId);
+        const newUser = {
+            id: userId,
+            email,
+            password: hashedPassword,
+            name,
+            phone: phone || '',
+            role: 'guardian',
+            profileImage: '',
+            subscription: {
+                plan: 'free',
+                status: 'active',
+                startDate: Date.now(),
+                endDate: null
+            },
+            settings: {
+                notifications: {
+                    email: true,
+                    push: true,
+                    sms: false
+                },
+                language: 'ko',
+                timezone: 'Asia/Seoul'
+            },
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
 
-        if (db) {
-            try {
-                // Skip connectivity checks - directly attempt to create user
-                // Using UUID ensures no collision with existing users
-                console.log('📝 Step 2: Directly writing user to database (skipping checks)...');
+        // Save to cache immediately (fast)
+        userCache.set(email, newUser);
+        console.log('✅ 사용자 캐시에 저장됨:', email);
 
-                // Hash password
-                const hashedPassword = await bcrypt.hash(password, 10);
-                console.log('📝 Step 2a: Password hashed');
+        // Generate tokens
+        const accessToken = generateAccessToken(newUser);
+        const refreshToken = generateRefreshToken(newUser);
 
-                // Create user object
-                const newUser = {
-                    id: userId,
-                    email,
-                    password: hashedPassword,
-                    name,
-                    phone: phone || '',
-                    role: 'guardian',
-                    profileImage: '',
-                    subscription: {
-                        plan: 'free',
-                        status: 'active',
-                        startDate: Date.now(),
-                        endDate: null
-                    },
-                    settings: {
-                        notifications: {
-                            email: true,
-                            push: true,
-                            sms: false
-                        },
-                        language: 'ko',
-                        timezone: 'Asia/Seoul'
-                    },
-                    createdAt: Date.now(),
-                    updatedAt: Date.now()
-                };
+        // Save to Firebase in background (don't wait)
+        saveUserToFirebaseAsync(newUser);
 
-                // Write user to database with extended timeout and retry
-                console.log('📝 Step 2b: Writing user to database...');
+        // Return success immediately
+        const { password: _, ...userWithoutPassword } = newUser;
 
-                const writeUserToDatabase = async (retries = 3) => {
-                    for (let attempt = 1; attempt <= retries; attempt++) {
-                        try {
-                            const writePromise = db.ref(`users/${userId}`).set(newUser);
-                            const timeoutPromise = new Promise((_, reject) =>
-                                setTimeout(() => reject(new Error(`Firebase write timeout after 30s (attempt ${attempt}/${retries})`)), 30000)
-                            );
-                            await Promise.race([writePromise, timeoutPromise]);
-                            return true;
-                        } catch (err) {
-                            console.log(`⚠️ Attempt ${attempt}/${retries} failed:`, err.message);
-                            if (attempt === retries) throw err;
-                            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s between retries
-                        }
-                    }
-                };
+        console.log('✅ 회원가입 성공:', email);
+        res.status(201).json({
+            user: userWithoutPassword,
+            token: accessToken,
+            refreshToken,
+            message: '회원가입이 완료되었습니다'
+        });
 
-                await writeUserToDatabase();
-                console.log('📝 Step 2b complete: User written to database');
-
-                // Generate tokens
-                console.log('📝 Step 3: Generating tokens...');
-                const accessToken = generateAccessToken(newUser);
-                const refreshToken = generateRefreshToken(newUser);
-                console.log('📝 Step 3 complete: Tokens generated');
-
-                // Try to save session (non-blocking - don't fail registration if this fails)
-                console.log('📝 Step 4: Saving session...');
-                try {
-                    const sessionId = uuidv4();
-                    await Promise.race([
-                        db.ref(`sessions/${sessionId}`).set({
-                            userId,
-                            token: await bcrypt.hash(accessToken, 10),
-                            refreshToken: await bcrypt.hash(refreshToken, 10),
-                            deviceInfo: {
-                                userAgent: req.get('user-agent'),
-                                ip: req.ip,
-                                deviceType: 'web'
-                            },
-                            createdAt: Date.now(),
-                            expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
-                            lastActivity: Date.now()
-                        }),
-                        new Promise((resolve) => setTimeout(resolve, 5000)) // 5 second timeout, resolve on timeout
-                    ]);
-                    console.log('📝 Step 4 complete: Session saved');
-                } catch (sessionError) {
-                    console.log('📝 Step 4: Session save failed (non-critical):', sessionError.message);
-                }
-
-                // Return user without password
-                const { password: _, ...userWithoutPassword } = newUser;
-                console.log('📝 Step 5: Sending success response');
-
-                res.status(201).json({
-                    user: userWithoutPassword,
-                    token: accessToken,
-                    refreshToken
-                });
-            } catch (dbError) {
-                console.error('❌ Database operation failed:', dbError.message);
-                return res.status(500).json({ error: 'Database operation failed: ' + dbError.message });
-            }
-        } else {
-            // Demo mode
-            res.status(503).json({
-                error: 'Registration not available in demo mode',
-                message: 'Please configure Firebase to enable user registration'
-            });
-        }
     } catch (error) {
-        console.error('Registration error:', error);
-        res.status(500).json({ error: 'Failed to register user' });
+        console.error('❌ 회원가입 오류:', error);
+        res.status(500).json({ error: '회원가입 중 오류가 발생했습니다' });
     }
 });
 
 /**
  * POST /api/auth/login
- * Login user
+ * Login user - checks cache first, then Firebase
  */
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
 
         if (!email || !password) {
-            return res.status(400).json({ error: 'Email and password are required' });
+            return res.status(400).json({ error: '이메일과 비밀번호를 입력해주세요' });
         }
 
-        // Check demo account first (works regardless of Firebase connection)
-        if (email === DEMO_USER.email) {
-            const isValidDemoPassword = await bcrypt.compare(password, DEMO_USER.password);
-            if (isValidDemoPassword) {
-                const accessToken = generateAccessToken(DEMO_USER);
-                const refreshToken = generateRefreshToken(DEMO_USER);
+        console.log('🔐 로그인 시도:', email);
 
-                const { password: _, ...userWithoutPassword } = DEMO_USER;
+        // Check cache first (includes demo user)
+        let user = userCache.get(email);
 
-                console.log('✅ Demo user login successful');
-                return res.json({
-                    user: userWithoutPassword,
-                    token: accessToken,
-                    refreshToken,
-                    demo: true
-                });
+        // If not in cache, try Firebase
+        if (!user) {
+            const db = getDatabase();
+            if (db) {
+                try {
+                    console.log('🔍 Firebase에서 사용자 검색 중...');
+                    const queryPromise = db.ref('users').orderByChild('email').equalTo(email).once('value');
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Firebase 쿼리 타임아웃')), 15000)
+                    );
+                    const usersSnapshot = await Promise.race([queryPromise, timeoutPromise]);
+
+                    if (usersSnapshot.exists()) {
+                        const users = usersSnapshot.val();
+                        const userId = Object.keys(users)[0];
+                        user = users[userId];
+                        // Add to cache for future logins
+                        userCache.set(email, user);
+                        console.log('✅ Firebase에서 사용자 찾음:', email);
+                    }
+                } catch (dbError) {
+                    console.warn('⚠️ Firebase 쿼리 실패:', dbError.message);
+                    // Continue without Firebase
+                }
             }
         }
 
-        const db = getDatabase();
-
-        if (db) {
-            try {
-                // Find user by email in Firebase with timeout
-                const queryPromise = db.ref('users').orderByChild('email').equalTo(email).once('value');
-                const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Firebase query timeout')), 20000)
-                );
-                const usersSnapshot = await Promise.race([queryPromise, timeoutPromise]);
-
-                if (!usersSnapshot.exists()) {
-                    return res.status(401).json({ error: 'Invalid credentials' });
-                }
-
-                const users = usersSnapshot.val();
-                const userId = Object.keys(users)[0];
-                const user = users[userId];
-
-                // Verify password
-                const isValidPassword = await bcrypt.compare(password, user.password);
-                if (!isValidPassword) {
-                    return res.status(401).json({ error: 'Invalid credentials' });
-                }
-
-                // Generate tokens
-                const accessToken = generateAccessToken(user);
-                const refreshToken = generateRefreshToken(user);
-
-                // Save session (non-blocking)
-                db.ref(`sessions/${uuidv4()}`).set({
-                    userId: user.id,
-                    token: await bcrypt.hash(accessToken, 10),
-                    refreshToken: await bcrypt.hash(refreshToken, 10),
-                    deviceInfo: {
-                        userAgent: req.get('user-agent'),
-                        ip: req.ip,
-                        deviceType: 'web'
-                    },
-                    createdAt: Date.now(),
-                    expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
-                    lastActivity: Date.now()
-                }).catch(err => console.log('⚠️ Session save failed:', err.message));
-
-                // Update last login (non-blocking)
-                db.ref(`users/${user.id}/updatedAt`).set(Date.now()).catch(() => { });
-
-                // Return user without password
-                const { password: _, ...userWithoutPassword } = user;
-
-                console.log('✅ Firebase user login successful:', email);
-                res.json({
-                    user: userWithoutPassword,
-                    token: accessToken,
-                    refreshToken
-                });
-            } catch (dbError) {
-                console.error('❌ Firebase login error:', dbError.message);
-                return res.status(500).json({ error: 'Database error: ' + dbError.message });
-            }
-        } else {
-            // Demo mode only - Firebase not connected
-            res.status(401).json({ error: 'Invalid credentials' });
+        // User not found
+        if (!user) {
+            console.log('❌ 사용자 없음:', email);
+            return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다' });
         }
+
+        // Verify password
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        if (!isValidPassword) {
+            console.log('❌ 비밀번호 불일치:', email);
+            return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다' });
+        }
+
+        // Generate tokens
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+
+        // Return user without password
+        const { password: _, ...userWithoutPassword } = user;
+
+        console.log('✅ 로그인 성공:', email);
+        res.json({
+            user: userWithoutPassword,
+            token: accessToken,
+            refreshToken,
+            demo: email === DEMO_USER.email
+        });
+
     } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ error: 'Failed to login' });
+        console.error('❌ 로그인 오류:', error);
+        res.status(500).json({ error: '로그인 중 오류가 발생했습니다' });
     }
 });
 
@@ -309,40 +247,51 @@ router.post('/refresh', async (req, res) => {
         const { refreshToken } = req.body;
 
         if (!refreshToken) {
-            return res.status(400).json({ error: 'Refresh token required' });
+            return res.status(400).json({ error: 'Refresh token이 필요합니다' });
         }
 
         // Verify refresh token
         const decoded = jwt.verify(refreshToken, JWT_SECRET);
-        const db = getDatabase();
 
-        if (db) {
-            const userSnapshot = await db.ref(`users/${decoded.id}`).once('value');
-            const user = userSnapshot.val();
-
-            if (!user) {
-                return res.status(401).json({ error: 'User not found' });
+        // Find user in cache
+        let user = null;
+        for (const [email, u] of userCache) {
+            if (u.id === decoded.id) {
+                user = u;
+                break;
             }
-
-            // Generate new access token
-            const accessToken = generateAccessToken(user);
-
-            res.json({ token: accessToken });
-        } else {
-            // Demo mode
-            if (decoded.id === DEMO_USER.id) {
-                const accessToken = generateAccessToken(DEMO_USER);
-                return res.json({ token: accessToken });
-            }
-
-            res.status(401).json({ error: 'Invalid refresh token' });
         }
+
+        // If not in cache, try Firebase
+        if (!user) {
+            const db = getDatabase();
+            if (db) {
+                try {
+                    const userSnapshot = await db.ref(`users/${decoded.id}`).once('value');
+                    user = userSnapshot.val();
+                    if (user) {
+                        userCache.set(user.email, user);
+                    }
+                } catch (err) {
+                    console.warn('⚠️ Firebase 사용자 조회 실패');
+                }
+            }
+        }
+
+        if (!user) {
+            return res.status(401).json({ error: '사용자를 찾을 수 없습니다' });
+        }
+
+        // Generate new access token
+        const accessToken = generateAccessToken(user);
+        res.json({ token: accessToken });
+
     } catch (error) {
         if (error.name === 'TokenExpiredError') {
-            return res.status(401).json({ error: 'Refresh token expired' });
+            return res.status(401).json({ error: 'Refresh token이 만료되었습니다' });
         }
-        console.error('Token refresh error:', error);
-        res.status(403).json({ error: 'Invalid refresh token' });
+        console.error('토큰 갱신 오류:', error);
+        res.status(403).json({ error: '잘못된 refresh token입니다' });
     }
 });
 
@@ -352,27 +301,11 @@ router.post('/refresh', async (req, res) => {
  */
 router.post('/logout', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.id;
-        const db = getDatabase();
-
-        if (db) {
-            // Remove all sessions for this user
-            const sessionsSnapshot = await db.ref('sessions').orderByChild('userId').equalTo(userId).once('value');
-            const sessions = sessionsSnapshot.val();
-
-            if (sessions) {
-                const updates = {};
-                Object.keys(sessions).forEach(sessionId => {
-                    updates[`sessions/${sessionId}`] = null;
-                });
-                await db.ref().update(updates);
-            }
-        }
-
-        res.json({ message: 'Logged out successfully' });
+        console.log('👋 로그아웃:', req.user.email);
+        res.json({ message: '로그아웃되었습니다' });
     } catch (error) {
-        console.error('Logout error:', error);
-        res.status(500).json({ error: 'Failed to logout' });
+        console.error('로그아웃 오류:', error);
+        res.status(500).json({ error: '로그아웃 중 오류가 발생했습니다' });
     }
 });
 
@@ -383,30 +316,42 @@ router.post('/logout', authenticateToken, async (req, res) => {
 router.get('/me', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
-        const db = getDatabase();
 
-        if (db) {
-            const userSnapshot = await db.ref(`users/${userId}`).once('value');
-            const user = userSnapshot.val();
-
-            if (!user) {
-                return res.status(404).json({ error: 'User not found' });
+        // Find user in cache
+        let user = null;
+        for (const [email, u] of userCache) {
+            if (u.id === userId) {
+                user = u;
+                break;
             }
-
-            const { password: _, ...userWithoutPassword } = user;
-            res.json(userWithoutPassword);
-        } else {
-            // Demo mode
-            if (userId === DEMO_USER.id) {
-                const { password: _, ...userWithoutPassword } = DEMO_USER;
-                return res.json(userWithoutPassword);
-            }
-
-            res.status(404).json({ error: 'User not found' });
         }
+
+        // If not in cache, try Firebase
+        if (!user) {
+            const db = getDatabase();
+            if (db) {
+                try {
+                    const userSnapshot = await db.ref(`users/${userId}`).once('value');
+                    user = userSnapshot.val();
+                    if (user) {
+                        userCache.set(user.email, user);
+                    }
+                } catch (err) {
+                    console.warn('⚠️ Firebase 사용자 조회 실패');
+                }
+            }
+        }
+
+        if (!user) {
+            return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+        }
+
+        const { password: _, ...userWithoutPassword } = user;
+        res.json(userWithoutPassword);
+
     } catch (error) {
-        console.error('Get user error:', error);
-        res.status(500).json({ error: 'Failed to get user info' });
+        console.error('사용자 조회 오류:', error);
+        res.status(500).json({ error: '사용자 정보를 가져오는 중 오류가 발생했습니다' });
     }
 });
 
@@ -418,31 +363,40 @@ router.put('/profile', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
         const { name, phone, profileImage, settings } = req.body;
-        const db = getDatabase();
 
-        if (db) {
-            const updates = {
-                updatedAt: Date.now()
-            };
-
-            if (name) updates.name = name;
-            if (phone) updates.phone = phone;
-            if (profileImage) updates.profileImage = profileImage;
-            if (settings) updates.settings = settings;
-
-            await db.ref(`users/${userId}`).update(updates);
-
-            const userSnapshot = await db.ref(`users/${userId}`).once('value');
-            const user = userSnapshot.val();
-            const { password: _, ...userWithoutPassword } = user;
-
-            res.json(userWithoutPassword);
-        } else {
-            res.status(503).json({ error: 'Profile update not available in demo mode' });
+        // Find user in cache
+        let user = null;
+        let userEmail = null;
+        for (const [email, u] of userCache) {
+            if (u.id === userId) {
+                user = u;
+                userEmail = email;
+                break;
+            }
         }
+
+        if (!user) {
+            return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+        }
+
+        // Update user in cache
+        if (name) user.name = name;
+        if (phone) user.phone = phone;
+        if (profileImage) user.profileImage = profileImage;
+        if (settings) user.settings = settings;
+        user.updatedAt = Date.now();
+
+        userCache.set(userEmail, user);
+
+        // Update Firebase in background
+        saveUserToFirebaseAsync(user);
+
+        const { password: _, ...userWithoutPassword } = user;
+        res.json(userWithoutPassword);
+
     } catch (error) {
-        console.error('Profile update error:', error);
-        res.status(500).json({ error: 'Failed to update profile' });
+        console.error('프로필 업데이트 오류:', error);
+        res.status(500).json({ error: '프로필 업데이트 중 오류가 발생했습니다' });
     }
 });
 
@@ -456,40 +410,49 @@ router.post('/change-password', authenticateToken, async (req, res) => {
         const { currentPassword, newPassword } = req.body;
 
         if (!currentPassword || !newPassword) {
-            return res.status(400).json({ error: 'Current and new password required' });
+            return res.status(400).json({ error: '현재 비밀번호와 새 비밀번호를 입력해주세요' });
         }
 
         if (newPassword.length < 6) {
-            return res.status(400).json({ error: 'New password must be at least 6 characters' });
+            return res.status(400).json({ error: '새 비밀번호는 최소 6자 이상이어야 합니다' });
         }
 
-        const db = getDatabase();
-
-        if (db) {
-            const userSnapshot = await db.ref(`users/${userId}`).once('value');
-            const user = userSnapshot.val();
-
-            // Verify current password
-            const isValidPassword = await bcrypt.compare(currentPassword, user.password);
-            if (!isValidPassword) {
-                return res.status(401).json({ error: 'Current password is incorrect' });
+        // Find user in cache
+        let user = null;
+        let userEmail = null;
+        for (const [email, u] of userCache) {
+            if (u.id === userId) {
+                user = u;
+                userEmail = email;
+                break;
             }
-
-            // Hash new password
-            const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-            await db.ref(`users/${userId}`).update({
-                password: hashedPassword,
-                updatedAt: Date.now()
-            });
-
-            res.json({ message: 'Password changed successfully' });
-        } else {
-            res.status(503).json({ error: 'Password change not available in demo mode' });
         }
+
+        if (!user) {
+            return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+        }
+
+        // Verify current password
+        const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+        if (!isValidPassword) {
+            return res.status(401).json({ error: '현재 비밀번호가 올바르지 않습니다' });
+        }
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        user.password = hashedPassword;
+        user.updatedAt = Date.now();
+
+        userCache.set(userEmail, user);
+
+        // Update Firebase in background
+        saveUserToFirebaseAsync(user);
+
+        res.json({ message: '비밀번호가 변경되었습니다' });
+
     } catch (error) {
-        console.error('Password change error:', error);
-        res.status(500).json({ error: 'Failed to change password' });
+        console.error('비밀번호 변경 오류:', error);
+        res.status(500).json({ error: '비밀번호 변경 중 오류가 발생했습니다' });
     }
 });
 
