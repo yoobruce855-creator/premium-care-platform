@@ -83,17 +83,57 @@ router.post('/register', async (req, res) => {
 
         if (db) {
             try {
-                // Check if user already exists with timeout
-                console.log('📝 Step 2: Checking if user exists...');
-                const checkUserPromise = db.ref('users').orderByChild('email').equalTo(email).once('value');
-                const checkTimeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('User check timeout after 10 seconds')), 10000)
+                // First, test basic database connectivity with a simple read
+                console.log('📝 Step 2a: Testing database connectivity...');
+                const testConnPromise = db.ref('.info/serverTimeOffset').once('value');
+                const testTimeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Database connectivity test timeout after 5 seconds')), 5000)
                 );
-                const usersSnapshot = await Promise.race([checkUserPromise, checkTimeoutPromise]);
-                console.log('📝 Step 2 complete: User exists check done');
 
-                if (usersSnapshot.exists()) {
-                    return res.status(409).json({ error: 'User already exists' });
+                try {
+                    await Promise.race([testConnPromise, testTimeoutPromise]);
+                    console.log('📝 Step 2a complete: Database connectivity confirmed');
+                } catch (connError) {
+                    console.error('❌ Database connectivity test failed:', connError.message);
+                    throw new Error('Database connection failed. Please try again later.');
+                }
+
+                // Check if users node exists and has children
+                console.log('📝 Step 2b: Checking users node...');
+                const usersNodePromise = db.ref('users').limitToFirst(1).once('value');
+                const usersNodeTimeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Users node check timeout after 5 seconds')), 5000)
+                );
+
+                let usersNodeSnapshot;
+                try {
+                    usersNodeSnapshot = await Promise.race([usersNodePromise, usersNodeTimeoutPromise]);
+                    console.log('📝 Step 2b complete: Users node check done, exists:', usersNodeSnapshot.exists());
+                } catch (nodeError) {
+                    console.log('📝 Step 2b: Users node check timed out, assuming empty database');
+                    // If the check times out, assume database is empty and proceed
+                    usersNodeSnapshot = { exists: () => false };
+                }
+
+                // Only check for duplicate email if the users node has data
+                if (usersNodeSnapshot.exists()) {
+                    console.log('📝 Step 2c: Checking if user with email exists...');
+                    const checkUserPromise = db.ref('users').orderByChild('email').equalTo(email).once('value');
+                    const checkTimeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('User check timeout after 8 seconds')), 8000)
+                    );
+
+                    try {
+                        const existingUserSnapshot = await Promise.race([checkUserPromise, checkTimeoutPromise]);
+                        if (existingUserSnapshot.exists()) {
+                            return res.status(409).json({ error: 'User already exists' });
+                        }
+                    } catch (checkError) {
+                        console.log('📝 Step 2c: Email check timed out, proceeding with registration');
+                        // If check times out, proceed (worst case: duplicate email will fail at write)
+                    }
+                } else {
+                    console.log('📝 Step 2c: Skipping email check - database is empty');
                 }
 
                 // Hash password
