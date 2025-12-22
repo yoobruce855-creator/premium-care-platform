@@ -72,6 +72,59 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Firebase diagnostic endpoint
+app.get('/firebase-test', async (req, res) => {
+    if (!firebaseInitialized) {
+        return res.json({ status: 'error', message: 'Firebase not initialized' });
+    }
+
+    const { getDatabase } = await import('./config/firebase.js');
+    const db = getDatabase();
+
+    if (!db) {
+        return res.json({ status: 'error', message: 'Database is null' });
+    }
+
+    const results = {
+        timestamp: new Date().toISOString(),
+        tests: {}
+    };
+
+    // Test 1: Simple set operation
+    const testId = `test_${Date.now()}`;
+    const startTime = Date.now();
+
+    try {
+        const writePromise = db.ref(`_diagnostics/${testId}`).set({ timestamp: Date.now(), test: true });
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Write timeout after 10s')), 10000)
+        );
+
+        await Promise.race([writePromise, timeoutPromise]);
+        results.tests.write = { status: 'success', duration: Date.now() - startTime };
+
+        // Test 2: Read back
+        const readStart = Date.now();
+        const readPromise = db.ref(`_diagnostics/${testId}`).once('value');
+        const readTimeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Read timeout after 10s')), 10000)
+        );
+
+        const snapshot = await Promise.race([readPromise, readTimeoutPromise]);
+        results.tests.read = { status: 'success', duration: Date.now() - readStart, data: snapshot.val() };
+
+        // Cleanup
+        await db.ref(`_diagnostics/${testId}`).remove();
+        results.tests.cleanup = { status: 'success' };
+
+    } catch (error) {
+        results.tests.error = { message: error.message, duration: Date.now() - startTime };
+    }
+
+    results.status = results.tests.write?.status === 'success' ? 'ok' : 'error';
+    res.json(results);
+});
+
 // API info
 app.get('/api', (req, res) => {
     res.json({

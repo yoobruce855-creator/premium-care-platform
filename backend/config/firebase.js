@@ -56,7 +56,16 @@ export function initializeFirebase() {
         db = admin.database();
         isFirebaseConnected = true;
 
-        // Test connection
+        // Log detailed configuration info for debugging
+        console.log('🔧 Firebase Configuration:');
+        console.log(`   Project ID: ${process.env.FIREBASE_PROJECT_ID}`);
+        console.log(`   Client Email: ${process.env.FIREBASE_CLIENT_EMAIL}`);
+        console.log(`   Database URL: ${process.env.FIREBASE_DATABASE_URL}`);
+        console.log(`   Private Key Bytes: ${privateKey.length}`);
+        console.log(`   Private Key Starts: ${privateKey.substring(0, 40)}...`);
+        console.log(`   Private Key Ends: ...${privateKey.substring(privateKey.length - 40)}`);
+
+        // Test connection with extended timeout
         db.ref('.info/connected').on('value', (snapshot) => {
             if (snapshot.val() === true) {
                 console.log('✅ Firebase Realtime Database connected');
